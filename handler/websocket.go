@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/gorilla/websocket"
@@ -27,7 +28,6 @@ const (
 	dataMsg                = "data"                 // Server -> Client
 	errorMsg               = "error"                // Server -> Client
 	completeMsg            = "complete"             // Server -> Client
-	//connectionKeepAliveMsg = "ka"                 // Server -> Client  TODO: keepalives
 )
 
 type operationMessage struct {
@@ -109,6 +109,10 @@ func (c *wsConnection) write(msg *operationMessage) {
 }
 
 func (c *wsConnection) run() {
+	if c.cfg.websocketKeepAliveInterval != 0 {
+		go c.pingOnInterval(c.ctx)
+	}
+
 	for {
 		message := c.readOp()
 		if message == nil {
@@ -263,4 +267,17 @@ func (c *wsConnection) close(closeCode int, message string) {
 	_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(closeCode, message))
 	c.mu.Unlock()
 	_ = c.conn.Close()
+}
+
+func (c *wsConnection) pingOnInterval(ctx context.Context) {
+	ticker := time.NewTicker(c.cfg.websocketKeepAliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			c.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second))
+		case <-ctx.Done():
+			return
+		}
+	}
 }
